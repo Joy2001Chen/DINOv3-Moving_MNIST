@@ -1,0 +1,11 @@
+pycache/
+*.pyc
+.DS_Store
+*.out
+*.pt
+*.pth
+data/
+sbatch_log/
+outputs/
+logs/
+checkpoints/
