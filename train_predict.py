@@ -17,6 +17,23 @@ from utils.seed import set_seed
 from utils.viz import save_comparison_grid
 
 
+def log_decoder_stats(model):
+    if not hasattr(model, "decoder"):
+        print("[Decoder] No decoder module present on model.")
+        return
+    for name, param in model.decoder.named_parameters():
+        param_mean = param.data.mean().item()
+        param_std = param.data.std(unbiased=False).item()
+        if param.grad is None:
+            print(f"[Decoder][{name}] mean={param_mean:.4e} std={param_std:.4e} grad=None")
+        else:
+            grad_mean = param.grad.mean().item()
+            grad_abs_mean = param.grad.abs().mean().item()
+            print(
+                f"[Decoder][{name}] mean={param_mean:.4e} std={param_std:.4e} "
+                f"grad_mean={grad_mean:.4e} grad_abs_mean={grad_abs_mean:.4e}"
+            )
+
 def resolve_device(device_arg: str) -> torch.device:
     requested = (device_arg or "auto").lower()
     if requested == "auto":
@@ -56,11 +73,11 @@ def get_args():
     p.add_argument("--seq-len", type=int, default=20)
     p.add_argument("--cond-len", type=int, default=10)
     p.add_argument("--num-digits", type=int, default=2)
-    p.add_argument("--train-seqs", type=int, default=50000)
-    p.add_argument("--val-seqs", type=int, default=10000)
+    p.add_argument("--train-seqs", type=int, default=500)#50000
+    p.add_argument("--val-seqs", type=int, default=100)#10000
     # train
     p.add_argument("--epochs", type=int, default=20)
-    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--device", type=str, default="auto",
                    help="Device to run on. 'auto' prefers CUDA when available, otherwise CPU.")
@@ -202,6 +219,9 @@ def main():
                 pred_logits = model(cond, cached_tokens=cond_tokens)
                 loss = criterion(pred_logits, target)
             scaler.scale(loss).backward()
+            if args.debug_checks and it % 50 == 0:
+                print(f"[Decoder] Stats at epoch {epoch} iter {it}:")
+                log_decoder_stats(model)
             scaler.step(opt)
             scaler.update()
 
