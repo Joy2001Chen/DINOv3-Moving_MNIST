@@ -54,7 +54,7 @@ Your model is a hybrid system combining state-of-the-art computer vision and seq
 
 ---
 
-### 🧠 Model Execution
+### Model Execution
 
 - **LatentDynViTForecaster:**  
   The end-to-end model responsible for feature extraction, spatial mixing, temporal forecasting, and decoding predicted frames.
@@ -64,7 +64,7 @@ Your model is a hybrid system combining state-of-the-art computer vision and seq
 
 ---
 
-### 🏃 Training Loop
+### Training Loop
 
 - **Device Resolution:**  
   Automatically selects the optimal device (preferably **GPU/CUDA**, fallback to **CPU**).
