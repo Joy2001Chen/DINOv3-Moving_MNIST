@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 import torch
 import torch.nn.init
 from torch import Tensor, nn
+import torch.nn.functional as F
 
 from dinov3.layers import LayerScale, Mlp, PatchEmbed, RMSNorm, RopePositionEmbedding, SelfAttentionBlock, SwiGLUFFN
 from dinov3.utils import named_apply
@@ -108,6 +109,8 @@ class DinoVisionTransformer(nn.Module):
             embed_dim=embed_dim,
             flatten_embedding=False,
         )
+        self._rope_base_hw = self.patch_embed.patches_resolution
+        self._rope_cache: dict[Tuple[int, int], Tuple[Tensor, Tensor]] = {}
 
         self.cls_token = nn.Parameter(torch.empty(1, 1, embed_dim, device=device))
         self.n_storage_tokens = n_storage_tokens
@@ -220,6 +223,8 @@ class DinoVisionTransformer(nn.Module):
         return x, (H, W)
 
     def forward_features_list(self, x_list: List[Tensor], masks_list: List[Tensor]) -> List[Dict[str, Tensor]]:
+        if self.training:
+            self._clear_rope_cache()
         x = []
         rope = []
         for t_x, t_masks in zip(x_list, masks_list):
@@ -227,10 +232,7 @@ class DinoVisionTransformer(nn.Module):
             x.append(t2_x)
             rope.append(hw_tuple)
         for _, blk in enumerate(self.blocks):
-            if self.rope_embed is not None:
-                rope_sincos = [self.rope_embed(H=H, W=W) for H, W in rope]
-            else:
-                rope_sincos = [None for r in rope]
+            rope_sincos = [self._get_rope_sincos(H, W) for H, W in rope]
             x = blk(x, rope_sincos)
         all_x = x
         output = []
@@ -266,16 +268,48 @@ class DinoVisionTransformer(nn.Module):
         else:
             return self.forward_features_list(x, masks)
 
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self._clear_rope_cache()
+        return self
+
+    def _interpolate_rope(self, values: Tensor, base_hw: Tuple[int, int], target_hw: Tuple[int, int]) -> Tensor:
+        base_h, base_w = base_hw
+        tgt_h, tgt_w = target_hw
+        reshaped = values.view(base_h, base_w, -1).permute(2, 0, 1).unsqueeze(0)  # 1, D, H, W
+        interp = F.interpolate(reshaped, size=(tgt_h, tgt_w), mode="bicubic", align_corners=False)
+        interp = interp.squeeze(0).permute(1, 2, 0).contiguous().view(tgt_h * tgt_w, -1)
+        return interp
+
+    def _get_rope_sincos(self, H: int, W: int) -> Tuple[Tensor, Tensor] | None:
+        if self.rope_embed is None:
+            return None
+        cache_key = (H, W)
+        if not self.training and cache_key in self._rope_cache:
+            return self._rope_cache[cache_key]
+
+        base_hw = self._rope_base_hw
+        sin_base, cos_base = self.rope_embed(H=base_hw[0], W=base_hw[1])
+        if (H, W) != base_hw:
+            sin = self._interpolate_rope(sin_base, base_hw, (H, W))
+            cos = self._interpolate_rope(cos_base, base_hw, (H, W))
+        else:
+            sin, cos = sin_base, cos_base
+
+        if not self.training:
+            self._rope_cache[cache_key] = (sin, cos)
+        return sin, cos
+
+    def _clear_rope_cache(self):
+        self._rope_cache.clear()
+
     def _get_intermediate_layers_not_chunked(self, x: Tensor, n: int = 1) -> List[Tensor]:
         x, (H, W) = self.prepare_tokens_with_masks(x)
         # If n is an int, take the n last blocks. If it's a list, take them
         output, total_block_len = [], len(self.blocks)
         blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
         for i, blk in enumerate(self.blocks):
-            if self.rope_embed is not None:
-                rope_sincos = self.rope_embed(H=H, W=W)
-            else:
-                rope_sincos = None
+            rope_sincos = self._get_rope_sincos(H, W)
             x = blk(x, rope_sincos)
             if i in blocks_to_take:
                 output.append(x)

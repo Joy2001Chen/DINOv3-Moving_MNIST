@@ -93,6 +93,7 @@ def main():
                                      transformer_ff=args.transformer_ff,
                                      dropout=args.dropout,
                                      cond_len=args.cond_len).to(device)
+    
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
 
@@ -105,7 +106,10 @@ def main():
         for seq, cond, target, label in pbar:
             cond = cond.to(device).float()
             label = label.to(device)
+            print(label.shape)
             logits = model(cond)
+            print(logits.shape)
+            pr
             loss = criterion(logits, label)
             opt.zero_grad()
             loss.backward()

@@ -41,7 +41,7 @@ export TF_CPP_MIN_LOG_LEVEL=3
 # pip install -r requirements.txt
 
 ########## 快速配置（小数据 + 1 epoch） ##########
-EPOCHS=1
+EPOCHS=10
 TRAIN_SEQS=512
 VAL_SEQS=128
 TEST_SEQS=256

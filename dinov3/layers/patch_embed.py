@@ -61,6 +61,49 @@ class PatchEmbed(nn.Module):
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_HW, stride=patch_HW)
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
+        # Adapt pre-trained weights when switching channel count (e.g., RGB → grayscale).
+        def _convert_pretrained_weights(*hook_args):
+            """
+            Handle both legacy (PyTorch <1.13) and newer hook signatures.
+            Legacy: (state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys)
+            Newer:  (+ error_msgs) and optionally prepends module when with_module=True.
+            """
+            if len(hook_args) == 7:
+                state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs = hook_args
+                module = self
+            elif len(hook_args) == 6:
+                state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys = hook_args
+                error_msgs = []
+                module = self
+            elif len(hook_args) == 8:
+                module, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs = hook_args
+            else:
+                raise RuntimeError(f"Unexpected pre-hook signature with {len(hook_args)} arguments.")
+
+            # Older PyTorch versions do not pass error_msgs; normalise to a list so we can append.
+            if error_msgs is None:
+                error_msgs = []
+            weight_key = prefix + "proj.weight"
+            if weight_key not in state_dict:
+                return
+            weight = state_dict[weight_key]
+            in_channels_loaded = weight.shape[1]
+            if in_channels_loaded == module.in_chans:
+                return  # already matches
+            if module.in_chans == 1 and in_channels_loaded == 3:
+                # average RGB filters to a single channel
+                state_dict[weight_key] = weight.mean(dim=1, keepdim=True)
+            elif module.in_chans == 3 and in_channels_loaded == 1:
+                # replicate grayscale filters to RGB (unlikely but safe)
+                state_dict[weight_key] = weight.repeat(1, 3, 1, 1)
+            else:
+                error_msgs.append(
+                    f"{weight_key} has incompatible channel dims: "
+                    f"loaded={in_channels_loaded}, expected={module.in_chans}"
+                )
+
+        self._register_load_state_dict_pre_hook(_convert_pretrained_weights)
+
     def forward(self, x: Tensor) -> Tensor:
         _, _, H, W = x.shape
         # patch_H, patch_W = self.patch_size

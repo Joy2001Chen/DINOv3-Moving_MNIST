@@ -32,7 +32,7 @@ def main():
     cfg = ckpt["cfg"]
     device = torch.device(args.device)
 
-    model = LatentDynViTForecaster(backbone_name=cfg["backbone"],
+    model = LatentDynViTForecaster(backbone_name=cfg.get("backbone", "facebook/dinov2-small"),
                                    temporal=cfg["temporal"],
                                    token_dim=cfg["token_dim"],
                                    d_model=cfg["d_model"],
@@ -41,7 +41,10 @@ def main():
                                    transformer_ff=cfg["transformer_ff"],
                                    dropout=cfg["dropout"],
                                    cond_len=cfg["cond_len"],
-                                   pred_len=cfg["seq_len"] - cfg["cond_len"]).to(device)
+                                   pred_len=cfg["seq_len"] - cfg["cond_len"],
+                                   use_dino3=cfg.get("use_dino3", False),
+                                   dino3_arch=cfg.get("dino3_arch", "vits16"),
+                                   dino3_weights=cfg.get("dino3_weights", "")).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
 

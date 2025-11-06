@@ -6,6 +6,8 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import datasets
 
+from utils.feature_cache import FeatureCache
+
 class MovingMNISTDataset(Dataset):
     """
     Generate Moving-MNIST on the fly.
@@ -27,7 +29,8 @@ class MovingMNISTDataset(Dataset):
                  num_sequences: int = 10000,
                  deterministic: bool = False,
                  seed: int = 42,
-                 return_collision_label: bool = False):
+                 return_collision_label: bool = False,
+                 feature_cache_root: str | None = None):
         super().__init__()
         assert split in {"train", "val", "test"}
         assert 0 < cond_len < seq_len
@@ -38,6 +41,7 @@ class MovingMNISTDataset(Dataset):
         self.deterministic = deterministic
         self.seed = seed
         self.return_collision_label = return_collision_label
+        self.feature_cache = FeatureCache(feature_cache_root, readonly=True) if feature_cache_root else None
 
         # MNIST pools: train/val use MNIST train; test uses MNIST test
         mnist_train = datasets.MNIST(root=root, train=True, download=True)
@@ -128,15 +132,28 @@ class MovingMNISTDataset(Dataset):
                 velocities[i] = [vx, vy]
             seq[t, 0] = canvas
 
-        cond = seq[:self.cond_len]                 # (Tin,1,H,W)
-        target = seq[self.cond_len:]               # (Tout,1,H,W)
+        cond = seq[:self.cond_len]
+        target = seq[self.cond_len:]
+
+        seq_t = torch.from_numpy(seq)
+        cond_t = torch.from_numpy(cond)
+        target_t = torch.from_numpy(target)
+
+        sample_key = f"seq_{idx:06d}"
+        feature_tuple = None
+        if self.feature_cache:
+            cached_tokens = self.feature_cache.load(sample_key)
+            if cached_tokens is not None:
+                feature_tuple = (cached_tokens.cond_tokens,
+                                 cached_tokens.target_tokens,
+                                 cached_tokens.Hp,
+                                 cached_tokens.Wp)
+
+        outputs = (seq_t, cond_t, target_t)
+        if feature_tuple is not None:
+            outputs = outputs + (feature_tuple,)
 
         if self.return_collision_label:
-            return (torch.from_numpy(seq),
-                    torch.from_numpy(cond),
-                    torch.from_numpy(target),
-                    torch.tensor(collision, dtype=torch.long))
-        else:
-            return (torch.from_numpy(seq),
-                    torch.from_numpy(cond),
-                    torch.from_numpy(target))
+            outputs = outputs + (torch.tensor(collision, dtype=torch.long),)
+
+        return outputs

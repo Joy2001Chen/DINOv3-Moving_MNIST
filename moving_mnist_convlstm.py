@@ -13,7 +13,8 @@ from PIL import Image, ImageDraw, ImageFont
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+#from torch.cuda.amp import GradScaler, autocast
+from torch import amp
 
 
 def set_seed(seed: int) -> None:
